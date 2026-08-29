@@ -14,8 +14,8 @@ load_dotenv()
 
 # --- Configuration ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# MODEL = "gemini-3.1-flash-lite"
-MODEL = "gemini-3.6-flash"
+MODEL = "gemma-4-31b-it"
+# MODEL = "gemini-3.6-flash"
 
 SYSTEM_PROMPT = """You are a friendly and professional customer support agent for SmartTech, \
 an Indian consumer electronics brand headquartered in Bangalore. SmartTech sells laptops, \

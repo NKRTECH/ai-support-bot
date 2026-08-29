@@ -55,7 +55,13 @@ def rerank(query: str, chunks: list[dict], top_n: int = 5) -> list[dict]:
                     response_mime_type="application/json",
                 ),
             )
-            data = json.loads(response.text)
+            # Extract text from parts directly to avoid 'non-text parts' warning
+            raw = ""
+            if response.candidates and response.candidates[0].content.parts:
+                for p in response.candidates[0].content.parts:
+                    if not getattr(p, 'thought', False) and getattr(p, 'text', None):
+                        raw += p.text
+            data = json.loads(raw)
             chunk["relevance_score"] = float(data.get("score", 0))
         except Exception:
             # If scoring fails for a chunk, give it a neutral score
