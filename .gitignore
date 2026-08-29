@@ -1,0 +1,31 @@
+# API Keys
+.env
+
+# Internal planning docs
+implementation_plan.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# ChromaDB (Phase 2)
+vectorstore/
+
+# SQLite database (Phase 4)
+*.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
