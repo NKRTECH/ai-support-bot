@@ -1,6 +1,7 @@
 """
 SmartTech Customer Support Agent
-A terminal-based conversational interface using the Google Gemini API.
+RAG-powered conversational interface using the Google Gemini API
+and a ChromaDB knowledge base.
 """
 
 import os
@@ -27,6 +28,9 @@ Your role:
 - Be concise — customers want quick answers, not essays
 - If you don't know something specific (like an order status or exact policy detail), \
 say so honestly. Don't make up information.
+- When answering from provided context, mention which document/policy the info comes from.
+- If the context does not contain the answer, say "I don't have that information in our \
+knowledge base" and suggest contacting support directly.
 
 SmartTech quick facts:
 - Website: smarttech.in
@@ -97,12 +101,29 @@ def main():
                   "Have a great day! 👋")
             break
 
+        # Retrieve relevant context from the knowledge base
+        from rag.retriever import search as rag_search
+
+        context_chunks = rag_search(user_input, top_k=5)
+
+        if context_chunks:
+            context_block = "\n\n".join(
+                f"[Source: {c['source']}]\n{c['text']}" for c in context_chunks
+            )
+            augmented_input = (
+                f"--- KNOWLEDGE BASE CONTEXT ---\n{context_block}\n"
+                f"--- END CONTEXT ---\n\n"
+                f"Customer question: {user_input}"
+            )
+        else:
+            augmented_input = user_input
+
         # Send message to Gemini and stream the response token-by-token
         try:
             thinking_started = False
             response_started = False
 
-            for chunk in chat.send_message_stream(user_input):
+            for chunk in chat.send_message_stream(augmented_input):
                 if not chunk.candidates or not chunk.candidates[0].content.parts:
                     continue
 
