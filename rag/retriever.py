@@ -6,12 +6,17 @@ Vector search excels at understanding meaning ("laptop for college" matches
 Combining both and re-ranking gives the best of both worlds.
 """
 
+import os
 import chromadb
 from rank_bm25 import BM25Okapi
 from rag.embedder import get_embedding
 
-# Persistent ChromaDB client
-_chroma_client = chromadb.PersistentClient(path="./vectorstore")
+# Persistent ChromaDB client — absolute path so it works regardless of cwd
+_VECTORSTORE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "vectorstore",
+)
+_chroma_client = chromadb.PersistentClient(path=_VECTORSTORE_PATH)
 
 COLLECTION_NAME = "smarttech_docs"
 
