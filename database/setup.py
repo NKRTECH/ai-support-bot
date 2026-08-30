@@ -143,6 +143,25 @@ def seed_data(conn):
         )
         order_id += 1
 
+    # Two recent delivered orders (within 15-day return window) for demo/testing
+    today = datetime.now()
+    recent_orders = [
+        ("ORD-1051", "CUST-1001", "ST-GS16-2026", "GameStation 16", 119999.00,
+         "delivered",
+         (today - timedelta(days=10)).strftime("%Y-%m-%d"),
+         (today - timedelta(days=8)).strftime("%Y-%m-%d"),
+         (today - timedelta(days=4)).strftime("%Y-%m-%d"),
+         "DL9988776655", "Delhivery"),
+        ("ORD-1052", "CUST-1001", "ST-EM-2026", "SmartTech ErgoMouse", 1999.00,
+         "delivered",
+         (today - timedelta(days=9)).strftime("%Y-%m-%d"),
+         (today - timedelta(days=7)).strftime("%Y-%m-%d"),
+         (today - timedelta(days=3)).strftime("%Y-%m-%d"),
+         "BD7766554433", "BlueDart"),
+    ]
+    for row in recent_orders:
+        conn.execute("INSERT OR IGNORE INTO orders VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", row)
+
     # --- Refunds ---
     # Pick some delivered orders and create refund records
     delivered = conn.execute(

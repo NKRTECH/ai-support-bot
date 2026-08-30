@@ -16,6 +16,8 @@ from rag.reranker import rerank
 from tools.order_tools import check_order_status, list_recent_orders
 from tools.account_tools import get_customer_info, reset_password
 from tools.refund_tools import check_refund_eligibility, process_refund
+from agent.loop import run_agent
+from agent.guardrails import validate_input
 
 log = get_logger(__name__)
 
@@ -103,6 +105,12 @@ def main():
 
         # Skip empty messages
         if not user_input:
+            continue
+
+        # Validate input
+        is_valid, reason = validate_input(user_input)
+        if not is_valid:
+            print(f"\nBot: {reason}\n")
             continue
 
         # Exit commands
@@ -197,234 +205,105 @@ def _handle_escalation(chat, user_input):
     _stream_response(chat, augmented_input)
 
 
+# ── Tool declarations + registry (shared between handler and agent loop) ────
+
+TOOL_REGISTRY = {
+    "check_order_status": check_order_status,
+    "list_recent_orders": list_recent_orders,
+    "get_customer_info": get_customer_info,
+    "reset_password": reset_password,
+    "check_refund_eligibility": check_refund_eligibility,
+    "process_refund": process_refund,
+}
+
+TOOL_DECLARATIONS = types.Tool(function_declarations=[
+    types.FunctionDeclaration(
+        name="check_order_status",
+        description="Look up the current status of a specific order by order ID",
+        parameters={
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "The order ID, e.g. ORD-1015"}
+            },
+            "required": ["order_id"],
+        },
+    ),
+    types.FunctionDeclaration(
+        name="list_recent_orders",
+        description="List the 5 most recent orders for a customer by their email address",
+        parameters={
+            "type": "object",
+            "properties": {
+                "email": {"type": "string", "description": "Customer email address"}
+            },
+            "required": ["email"],
+        },
+    ),
+    types.FunctionDeclaration(
+        name="get_customer_info",
+        description="Look up a customer's account details by email",
+        parameters={
+            "type": "object",
+            "properties": {
+                "email": {"type": "string", "description": "Customer email address"}
+            },
+            "required": ["email"],
+        },
+    ),
+    types.FunctionDeclaration(
+        name="reset_password",
+        description="Send a password reset link to the customer's email",
+        parameters={
+            "type": "object",
+            "properties": {
+                "email": {"type": "string", "description": "Customer email address"}
+            },
+            "required": ["email"],
+        },
+    ),
+    types.FunctionDeclaration(
+        name="check_refund_eligibility",
+        description="Check whether an order is eligible for a refund based on delivery date and return policy",
+        parameters={
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "The order ID, e.g. ORD-1015"}
+            },
+            "required": ["order_id"],
+        },
+    ),
+    types.FunctionDeclaration(
+        name="process_refund",
+        description="Process a refund for a delivered order",
+        parameters={
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "The order ID to refund"},
+                "reason": {"type": "string", "description": "Reason for the refund"},
+            },
+            "required": ["order_id", "reason"],
+        },
+    ),
+])
+
+
 def _handle_action(client, user_input, intent_result):
     """
-    Use Gemini function calling to execute real tools.
+    Run the ReAct agent loop for action intents.
 
-    Flow: send message + tool definitions → LLM returns a function_call →
-    we execute it → send the result back → LLM generates the final answer.
+    The agent can chain multiple tool calls (e.g., check order → check
+    eligibility → process refund) and includes human-in-the-loop approval
+    for high-risk actions like refunds.
     """
-    # Map of function name -> callable
-    tool_registry = {
-        "check_order_status": check_order_status,
-        "list_recent_orders": list_recent_orders,
-        "get_customer_info": get_customer_info,
-        "reset_password": reset_password,
-        "check_refund_eligibility": check_refund_eligibility,
-        "process_refund": process_refund,
-    }
-
-    # Define tools for the Gemini API
-    tool_declarations = types.Tool(function_declarations=[
-        types.FunctionDeclaration(
-            name="check_order_status",
-            description="Look up the current status of a specific order by order ID",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "order_id": {"type": "string", "description": "The order ID, e.g. ORD-1015"}
-                },
-                "required": ["order_id"],
-            },
-        ),
-        types.FunctionDeclaration(
-            name="list_recent_orders",
-            description="List the 5 most recent orders for a customer by their email address",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "email": {"type": "string", "description": "Customer email address"}
-                },
-                "required": ["email"],
-            },
-        ),
-        types.FunctionDeclaration(
-            name="get_customer_info",
-            description="Look up a customer's account details by email",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "email": {"type": "string", "description": "Customer email address"}
-                },
-                "required": ["email"],
-            },
-        ),
-        types.FunctionDeclaration(
-            name="reset_password",
-            description="Send a password reset link to the customer's email",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "email": {"type": "string", "description": "Customer email address"}
-                },
-                "required": ["email"],
-            },
-        ),
-        types.FunctionDeclaration(
-            name="check_refund_eligibility",
-            description="Check whether an order is eligible for a refund based on delivery date and return policy",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "order_id": {"type": "string", "description": "The order ID, e.g. ORD-1015"}
-                },
-                "required": ["order_id"],
-            },
-        ),
-        types.FunctionDeclaration(
-            name="process_refund",
-            description="Process a refund for a delivered order",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "order_id": {"type": "string", "description": "The order ID to refund"},
-                    "reason": {"type": "string", "description": "Reason for the refund"},
-                },
-                "required": ["order_id", "reason"],
-            },
-        ),
-    ])
-
-    try:
-        # Send message with tool definitions
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[types.Part(text=SYSTEM_PROMPT + "\n\nCustomer message: " + user_input)],
-                )
-            ],
-            config=types.GenerateContentConfig(
-                tools=[tool_declarations],
-                temperature=0.3,
-                max_output_tokens=1024,
-            ),
-        )
-
-        # Log the raw response for debugging
-        log.debug(
-            "Raw response candidates: %s",
-            [
-                {
-                    "parts": [
-                        {
-                            "type": type(p).__name__,
-                            "has_text": bool(getattr(p, 'text', None)),
-                            "has_fc": bool(getattr(p, 'function_call', None)),
-                            "thought": getattr(p, 'thought', False),
-                            "text_preview": (getattr(p, 'text', '') or '')[:100],
-                            "fc_name": getattr(getattr(p, 'function_call', None), 'name', None),
-                        }
-                        for p in c.content.parts
-                    ] if c.content and c.content.parts else "NO_PARTS"
-                }
-                for c in (response.candidates or [])
-            ],
-        )
-
-        # Check if the model wants to call a function
-        fc_part = None
-        if response.candidates and response.candidates[0].content.parts:
-            for part in response.candidates[0].content.parts:
-                if getattr(part, 'function_call', None) and part.function_call.name:
-                    fc_part = part
-                    break
-
-        if fc_part:
-            fc = fc_part.function_call
-            fn_name = fc.name
-            fn_args = dict(fc.args) if fc.args else {}
-
-            log.info("Tool call: %s(%s)", fn_name, fn_args)
-            print(f"\033[90m[calling: {fn_name}({fn_args})]\033[0m")
-
-            # Execute the tool
-            if fn_name in tool_registry:
-                result = tool_registry[fn_name](**fn_args)
-                log.info("Tool result for %s: %s", fn_name, result[:200])
-            else:
-                result = f"Unknown tool: {fn_name}"
-                log.warning("Unknown tool requested: %s", fn_name)
-
-            print(f"\033[90m[tool result received]\033[0m")
-
-            # Send the tool result back and get the final answer
-            final_response = client.models.generate_content(
-                model=MODEL,
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[types.Part(text=SYSTEM_PROMPT + "\n\nCustomer message: " + user_input)],
-                    ),
-                    types.Content(
-                        role="model",
-                        parts=[types.Part(function_call=fc)],
-                    ),
-                    types.Content(
-                        role="user",
-                        parts=[types.Part(function_response=types.FunctionResponse(
-                            name=fn_name,
-                            response={"result": result},
-                        ))],
-                    ),
-                ],
-                config=types.GenerateContentConfig(
-                    tools=[tool_declarations],
-                    temperature=0.5,
-                    max_output_tokens=1024,
-                ),
-            )
-
-            # Extract and print the final text
-            bot_text = ""
-            if final_response.candidates and final_response.candidates[0].content.parts:
-                for part in final_response.candidates[0].content.parts:
-                    if not getattr(part, 'thought', False) and getattr(part, 'text', None):
-                        bot_text += part.text
-
-            if bot_text:
-                log.info("Final response length: %d chars", len(bot_text))
-                print(f"\nBot: {bot_text.strip()}\n")
-            else:
-                log.warning(
-                    "Empty response after tool call. fn=%s, result_len=%d, response_parts=%s",
-                    fn_name, len(result),
-                    [
-                        {"type": type(p).__name__, "text": (getattr(p, 'text', '') or '')[:50], "thought": getattr(p, 'thought', False)}
-                        for p in (final_response.candidates[0].content.parts if final_response.candidates else [])
-                    ],
-                )
-                print("\nBot: I looked that up but couldn't format a response. "
-                      "Please try rephrasing your question.\n")
-
-        else:
-            # Model chose not to call a tool
-            log.warning(
-                "Model did NOT call a tool. Model=%s, intent=%s. "
-                "This model may not support function calling.",
-                MODEL, intent_result.intent,
-            )
-            bot_text = ""
-            if response.candidates and response.candidates[0].content.parts:
-                for part in response.candidates[0].content.parts:
-                    if not getattr(part, 'thought', False) and getattr(part, 'text', None):
-                        bot_text += part.text
-            log.debug("Fallback text response: '%s'", bot_text[:200] if bot_text else "(empty)")
-            print(f"\nBot: {bot_text.strip()}\n")
-
-    except ServerError:
-        log.error("Tool calling hit server error (503/429)", exc_info=True)
-        print("\nBot: I'm having trouble connecting to our systems right now "
-              "(high demand). Please try again in a moment.\n")
-    except ClientError as e:
-        log.error("Tool calling client error: %s", e, exc_info=True)
-        print("\nBot: Something went wrong while looking that up. "
-              "Please try again or contact us at 1800-123-4567.\n")
-    except Exception as e:
-        log.error("Tool calling failed unexpectedly: %s", e, exc_info=True)
-        print("\nBot: Something went wrong while looking that up. "
-              "Please try again or contact us at 1800-123-4567.\n")
+    response_text = run_agent(
+        client=client,
+        model=MODEL,
+        system_prompt=SYSTEM_PROMPT,
+        user_message=user_input,
+        tool_declarations=TOOL_DECLARATIONS,
+        tool_registry=TOOL_REGISTRY,
+    )
+    print(f"\nBot: {response_text.strip()}\n")
 
 
 def _stream_response(chat, message):

@@ -6,7 +6,9 @@ categories and extracts relevant entities (order IDs, error codes, etc.)
 so the system can route to the correct handler.
 """
 
+import json
 import os
+from typing import Literal
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
@@ -18,19 +20,18 @@ log = get_logger(__name__)
 load_dotenv()
 
 _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-_MODEL = "gemini-3.6-flash"
-
+# _MODEL = "gemini-3.6-flash"
+_MODEL = "gemma-4-31b-it"
 
 
 class IntentResult(BaseModel):
     """Structured output schema for intent classification."""
 
-    intent: str = Field(
-        description=(
-            "The classified intent. Must be one of: "
-            "faq, order_status, refund_request, password_reset, "
-            "technical_issue, escalation"
-        )
+    intent: Literal[
+        "faq", "order_status", "refund_request",
+        "password_reset", "technical_issue", "escalation",
+    ] = Field(
+        description="The classified intent category."
     )
     confidence: float = Field(default=0.9)
     order_id: str | None = Field(default=None)
@@ -63,16 +64,6 @@ Classify the customer message into exactly ONE of these intents:
 - password_reset: Customer needs to reset password or recover their account
 - technical_issue: Customer has a technical problem, error code, or needs troubleshooting
 - escalation: Customer is angry, wants to speak to a manager, or the issue is beyond support
-
-Respond with this exact JSON structure:
-{
-  "intent": "<one of the intents above>",
-  "confidence": <0.0 to 1.0>,
-  "order_id": "<if mentioned, e.g. ORD-1234, else null>",
-  "email": "<if mentioned, else null>",
-  "error_code": "<if mentioned, e.g. E-401, else null>",
-  "product_name": "<if mentioned, e.g. ProBook 15, else null>"
-}
 """
 
 
@@ -80,11 +71,10 @@ def classify_intent(message: str) -> IntentResult:
     """
     Classify a customer message into an intent category.
 
-    Uses a lightweight Gemini call with JSON output to get a valid,
-    parseable result every time.
+    Uses Gemini structured output with response_schema to guarantee
+    valid, schema-compliant JSON. The Literal type on intent constrains
+    the model to only output one of the 6 valid intent categories.
     """
-    import json
-
     response = _client.models.generate_content(
         model=_MODEL,
         contents=f"Customer message: {message}",
@@ -93,18 +83,26 @@ def classify_intent(message: str) -> IntentResult:
             temperature=0.0,
             max_output_tokens=256,
             response_mime_type="application/json",
+            response_schema=IntentResult,
         ),
     )
 
-    # Extract text from parts directly (avoids 'non-text parts' warning)
+    # Extract text from parts (skip thinking tokens)
     raw = ""
     if response.candidates and response.candidates[0].content.parts:
         for p in response.candidates[0].content.parts:
             if not getattr(p, 'thought', False) and getattr(p, 'text', None):
                 raw += p.text
 
-    data = json.loads(raw)
     log.debug("Intent raw JSON: %s", raw[:300])
+
+    # Extract JSON object if model returned surrounding text
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1:
+        raw = raw[start:end + 1]
+
+    data = json.loads(raw)
 
     # Handle case where LLM returns entities as a nested dict
     if "entities" in data and isinstance(data["entities"], dict):
@@ -117,4 +115,3 @@ def classify_intent(message: str) -> IntentResult:
     result = IntentResult(**data)
     log.debug("Parsed IntentResult: intent=%s confidence=%.2f", result.intent, result.confidence)
     return result
-
