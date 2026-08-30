@@ -3,3 +3,4 @@ python-dotenv
 chromadb
 rank_bm25
 pydantic
+mcp
