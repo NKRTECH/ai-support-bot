@@ -3,6 +3,7 @@
 
 # Internal planning docs
 implementation_plan.md
+ARCHITECTURE.md
 
 # Python
 __pycache__/
@@ -14,11 +15,14 @@ venv/
 .venv/
 env/
 
-# ChromaDB (Phase 2)
+# Vector store data
 vectorstore/
 
-# SQLite database (Phase 4)
+# SQLite database
 *.db
+
+# Runtime logs
+logs/
 
 # IDE
 .vscode/

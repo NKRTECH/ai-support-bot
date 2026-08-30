@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+from logger import get_logger
+
+log = get_logger(__name__)
 
 load_dotenv()
 
@@ -101,13 +104,17 @@ def classify_intent(message: str) -> IntentResult:
                 raw += p.text
 
     data = json.loads(raw)
+    log.debug("Intent raw JSON: %s", raw[:300])
 
     # Handle case where LLM returns entities as a nested dict
     if "entities" in data and isinstance(data["entities"], dict):
         entities = data.pop("entities")
+        log.debug("Flattening nested entities dict: %s", entities)
         for key in ("order_id", "email", "error_code", "product_name"):
             if key in entities and entities[key]:
                 data.setdefault(key, entities[key])
 
-    return IntentResult(**data)
+    result = IntentResult(**data)
+    log.debug("Parsed IntentResult: intent=%s confidence=%.2f", result.intent, result.confidence)
+    return result
 
