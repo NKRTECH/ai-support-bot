@@ -4,3 +4,6 @@ chromadb
 rank_bm25
 pydantic
 mcp
+langgraph
+langchain-google-genai
+langchain-core
